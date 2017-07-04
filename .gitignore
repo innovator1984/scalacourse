@@ -9,6 +9,7 @@
 */out/
 */spark-temp/
 */spark-warehouse/
+*/.metadata
 */.project
 */.classpath
 */.cache-main
