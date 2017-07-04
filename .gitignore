@@ -1,6 +1,8 @@
+*.cache
 *.class
 *.jar
 */target/
+*/project/target/
 */jar/
 */build/
 */out/
