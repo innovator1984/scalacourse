@@ -25,6 +25,37 @@ object StackOverflow extends StackOverflow {
   @transient lazy val sc: SparkContext = new SparkContext(conf)
 
   /** Main function */
+  def newMain(args: Array[String]): Unit = {
+
+    val lines   = sc.textFile("src/main/resources/stackoverflow/stackoverflow.csv")
+    val raw: RDD[Posting]     = rawPostings(lines)
+    val grouped: RDD[(Int, Iterable[(Posting, Posting)])] = groupedPostings(raw)
+    val scored: RDD[(Posting, Int)]  = scoredPostings(grouped)
+    println("DEBUG BEGIN")
+    scored.collect().foreach(println)
+    println("DEBUG END")
+    // FIXME
+    // https://www.coursera.org/learn/scala-spark-big-data/programming/FWGnz/stackoverflow-2-week-long-assignment/
+    // discussions/threads/Zm0jUAnSEeeQeQo2lD9-LA
+    // following test case should make this output .
+    //
+    // 6 Python (100.0%) 4
+    //
+    // 39 Scala (66.7 %) 3
+    //
+    // (Python,100.0,4,6)
+    //
+    // (Scala,66.66666666666666,3,39)
+
+    val vectors: RDD[(Int, Int)] = vectorPostings(scored)
+     assert(vectors.count() == 2121822, "Incorrect number of vectors: " + vectors.count())
+
+    val means: Array[(Int, Int)]   = kmeans(sampleVectors(vectors), vectors, debug = true)
+    val results: Array[(String, Double, Int, Int)] = clusterResults(means, vectors)
+    printResults(results)
+  }
+
+  /** Main function */
   def main(args: Array[String]): Unit = {
 
     val lines   = sc.textFile("src/main/resources/stackoverflow/stackoverflow.csv")
@@ -39,7 +70,6 @@ object StackOverflow extends StackOverflow {
     printResults(results)
   }
 }
-
 
 /** The parsing and kmeans methods */
 class StackOverflow extends Serializable {
@@ -69,12 +99,25 @@ class StackOverflow extends Serializable {
   // Parsing utilities:
   //
   //
+  def fakeVec(vec: RDD[(Int, Int)]): (RDD[(Int, Int)], Array[(Int, Int)]) = {
+    val xxx = SparkContext.getOrCreate().parallelize(List.range(0, 680)).map(x => (5 * langSpread, x))
+    val out = xxx.join(vec).groupBy(_._1).map({ case (k, v) => (1, v.map(y => (5 * langSpread
+      + (math.abs(y._2._1) % 15) * 1000000, math.abs(y._2._1) % 15)))
+    }).values.flatMap(_.toStream)
+    val arr = out.collect()
+    assert(arr.length == 680)
+    assert(arr(0)._1 == 5 * langSpread)
+    assert(arr(0)._2 == 0)
+    assert(arr(1)._1 == 5 * langSpread + 1000000)
+    assert(arr(1)._2 == 1)
+    (out, arr)
+  }
 
   /** Load postings from the given file */
   def rawPostings(lines: RDD[String]): RDD[Posting] = {
     // TODO 1.A The Data
     // raw: the raw Posting entries for each line
-    lines.map(line => {
+    val res = lines.map(line => {
       val arr = line.split(",")
       Posting(postingType = arr(0).toInt,
         id = arr(1).toInt,
@@ -83,6 +126,7 @@ class StackOverflow extends Serializable {
         score = arr(4).toInt,
         tags = if (arr.length >= 6) Some(arr(5).intern()) else None)
     })
+    res
   }
 
 
@@ -113,7 +157,7 @@ class StackOverflow extends Serializable {
     val answers = postings.filter(p => p.postingType == 2).map(p => (p.parentId.get, p))
     val joined = questions.join(answers)
     val result = joined.groupBy(x => x._1).mapValues(x => x.map(y => y._2))
-    result
+    result.cache
   }
 
 
@@ -142,7 +186,7 @@ class StackOverflow extends Serializable {
         xs.head._1,
         answerHighScore(xs.filter(x => x._2.acceptedAnswer.isEmpty).map(x => x._2).toArray)
       )
-    })
+    }).cache
   }
 
 
@@ -176,7 +220,7 @@ class StackOverflow extends Serializable {
     scored
       .map(scored => (firstLangInTag(scored._1.tags, langs).getOrElse(-1) * langSpread, scored._2))
       .filter(_._1 >= 0)
-      .sortBy(_._1)
+      .sortBy(_._1).cache
   }
 
 
